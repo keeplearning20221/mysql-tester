@@ -641,18 +641,19 @@ func (t *tester) loadQueries() ([]query, error) {
 		} else {
 			lastQuery := queries[len(queries)-1]
 			lastQuery = query{Query: fmt.Sprintf("%s\n%s", lastQuery.Query, s), Line: lastQuery.Line}
-			newStmt = strings.HasSuffix(s, splitSQL)
-			if newStmt {
-				if splitSQL == ";" {
-					queries[len(queries)-1].Query = queries[len(queries)-1].Query[:len(queries[len(queries)-1].Query)]
-				} else {
-					queries[len(queries)-1].Query = queries[len(queries)-1].Query[:len(queries[len(queries)-1].Query)-len(splitSQL)]
-				}
+			queries[len(queries)-1] = lastQuery
+		}
+		newStmt = strings.HasSuffix(s, splitSQL)
+		if newStmt {
+			if splitSQL == ";" {
+				queries[len(queries)-1].Query = queries[len(queries)-1].Query[:len(queries[len(queries)-1].Query)]
+			} else {
+				queries[len(queries)-1].Query = queries[len(queries)-1].Query[:len(queries[len(queries)-1].Query)-len(splitSQL)]
 			}
 		}
 
 		// if the line has a ; in the end, we will treat new line as the new statement.
-		newStmt = strings.HasSuffix(s, ";")
+		//newStmt = strings.HasSuffix(s, ";")
 	}
 
 	return ParseQueries(queries...)
