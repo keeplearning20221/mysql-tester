@@ -614,6 +614,7 @@ func (t *tester) loadQueries() ([]query, error) {
 
 	seps := bytes.Split(data, []byte("\n"))
 	queries := make([]query, 0, len(seps))
+	splitSQL := ";"
 	newStmt := true
 	for i, v := range seps {
 		v := bytes.TrimSpace(v)
@@ -629,13 +630,25 @@ func (t *tester) loadQueries() ([]query, error) {
 		} else if len(s) == 0 {
 			continue
 		}
-
+		strs := strings.Fields(s)
+		if strings.EqualFold(strs[0], "delimiter") && len(strs) == 2 && strings.HasSuffix(strs[1], splitSQL) {
+			splitSQL = strs[1][:len(strs[1])-len(splitSQL)]
+			newStmt = true
+			continue
+		}
 		if newStmt {
 			queries = append(queries, query{Query: s, Line: i + 1})
 		} else {
 			lastQuery := queries[len(queries)-1]
 			lastQuery = query{Query: fmt.Sprintf("%s\n%s", lastQuery.Query, s), Line: lastQuery.Line}
-			queries[len(queries)-1] = lastQuery
+			newStmt = strings.HasSuffix(s, splitSQL)
+			if newStmt {
+				if splitSQL == ";" {
+					queries[len(queries)-1].Query = queries[len(queries)-1].Query[:len(queries[len(queries)-1].Query)]
+				} else {
+					queries[len(queries)-1].Query = queries[len(queries)-1].Query[:len(queries[len(queries)-1].Query)-len(splitSQL)]
+				}
+			}
 		}
 
 		// if the line has a ; in the end, we will treat new line as the new statement.
@@ -877,23 +890,20 @@ func dumpToByteRows(rows *sql.Rows) (*byteRows, error) {
 
 	data := make([]byteRow, 0, 8)
 	args := make([]interface{}, len(cols))
-	for {
-		for rows.Next() {
-			tmp := make([][]byte, len(cols))
-			for i := 0; i < len(args); i++ {
-				args[i] = &tmp[i]
-			}
-			err := rows.Scan(args...)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
 
-			data = append(data, byteRow{tmp})
+	for rows.Next() {
+		tmp := make([][]byte, len(cols))
+		for i := 0; i < len(args); i++ {
+			args[i] = &tmp[i]
 		}
-		if !rows.NextResultSet() {
-			break
+		err := rows.Scan(args...)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+
+		data = append(data, byteRow{tmp})
 	}
+
 	err = rows.Err()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -908,18 +918,25 @@ func (t *tester) executeStmt(query string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	rows, err := dumpToByteRows(raw)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if t.enableResultLog && (len(rows.cols) > 0 || len(rows.data) > 0) {
-		if err = t.writeQueryResult(rows); err != nil {
+	defer raw.Close()
+	for {
+		rows, err := dumpToByteRows(raw)
+		if err != nil {
 			return errors.Trace(err)
 		}
-	}
 
+		if t.enableResultLog && (len(rows.cols) > 0 || len(rows.data) > 0) {
+			if err = t.writeQueryResult(rows); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		if !raw.NextResultSet() {
+			if raw.Err() != nil {
+				return raw.Err()
+			}
+			break
+		}
+	}
 	if t.enableInfo {
 		err = t.curr.conn.Raw(func(driverConn any) error {
 			rowsAffected := driverConn.(*mysql.MysqlConn).RowsAffected()
